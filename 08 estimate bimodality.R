@@ -3,12 +3,11 @@
 
 # Load libraries ----------------------------------------------------------
 require(pacman)
-p_load(mousetrap, terra, fs, sf, tidyverse, glue, ggspatial, raster, climateR, gtools, geodata, rnaturalearthdata, rnaturalearth, readxl)
+p_load(mousetrap, terra, diptest, fs, sf, tidyverse, glue, ggspatial, raster, climateR, gtools, geodata, rnaturalearthdata, rnaturalearth, readxl)
 
 g <- gc(reset = T)
 rm(list = ls())
 options(scipen = 999, warn = -1)
-
 
 # Load data ---------------------------------------------------------------
 
@@ -47,19 +46,28 @@ prec.crnt <- as_tibble(dplyr::select(cbind(crds, terra::extract(prec.crnt, crds[
 ##
 calc.bmdl <- function(tb, gid){
   
-  # tb <- prec.crnt
-  # gid <- pull(prec.crnt, id)[1]
+  tb <- prec.crnt
+  gid <- pull(prec.crnt, id)[1]
   
   ## Filtering
   cat('To process: ', gid, '\n')
   df <- filter(tb, id == gid)
-  vc <- df %>% dplyr::select(starts_with('prec')) %>% as.numeric()
+  df <- df %>% gather(var, value, -c(id, source, Longitude, Latitude)) %>% separate(data = ., col = 'var', into = c('variable', 'month'))
+  df <- df %>% mutate(month = as.numeric(month))
+  
+  mn <- df %>% top_n(x = ., n = -1, wt = value) %>% pull(month)
+  vc <- df %>% pull(value) %>% as.numeric()
+  pr <- c(vc[mn:length(vc)], vc[1:(mn-1)])
   
   ## To calculate bimodality coefficient
-  ix <- bimodality_coefficient(vc)
+  ix <- bimodality_coefficient(pr)
+  ix
+  bimodality_coefficient(vc)
   
-  ## Make the table 
-  tb <- tibble(id = gid, bimodal = ix)
+  ## Diptest
+  dp <- dip.test(x = pr)
+  dp$statistic
+  tb <- tibble(id = gid, bimodal = ix, dpi = dp$statistic, pvalue = dp$p.value)
   
   ## Return
   cat('Finish!\n')
@@ -68,7 +76,8 @@ calc.bmdl <- function(tb, gid){
 }
 
 ##
-gids <- pull(prec.crnt, id)
+# gids <- prec.crnt %>% pull(id) %>% .[1:34]
+gids <- prec.crnt %>% pull(id)
 ixcr <- map(.x = gids, .f = function(i){calc.bmdl(tb = prec.crnt, gid = i)})
 ixcr <- bind_rows(ixcr)
 ixcr <- mutate(ixcr, period = 'Current')
@@ -86,12 +95,13 @@ ixft <- mutate(ixft, period = '2C')
 indx <- rbind(ixcr, ixft)
 
 # Join with the main table  -----------------------------------------------
-
 fnal <- inner_join(vles, indx, by = c('id', 'period'))
-write.csv(fnal, './tbl/points/values_tc/vles_current-2c_v3.csv', row.names = FALSE)
+fnal %>% dplyr::select(bimodal, dpi, pvalue)
+hist(fnal$pvalue)
+write.csv(fnal, './tbl/points/values_tc/vles_current-2c_v4.csv', row.names = FALSE)
 
 
-
-
+fnal
+fnal %>% filter(id == gids[1]) %>% dplyr::select(period, id, source, bimodal, dpi, pvalue)
 
 
